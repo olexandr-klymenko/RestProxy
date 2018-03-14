@@ -22,10 +22,14 @@ func getConfig(rawConfig string) map[string]int {
 
 func handleHTTP(w http.ResponseWriter, req *http.Request, backendURL string,
 	delayConfig map[string]int, blockConfig map[string]int) {
+
 	log.Printf("Incoming request: %s, headers: %s",
 		req.URL.Path, getHeadersJSON(req.Header))
 	doDelay(delayConfig, req.URL.Path)
-	makeResponse(req, backendURL, w, blockConfig)
+	if doBlock(blockConfig, req, w) {
+		return
+	}
+	makeResponse(req, backendURL, w)
 }
 
 func getHeadersJSON(header map[string][]string) string {
@@ -46,45 +50,40 @@ func doDelay(delayConfig map[string]int, path string) {
 	}
 }
 
-func makeResponse(req *http.Request, backendURL string, w http.ResponseWriter, blockConfig map[string]int) {
+func doBlock(blockConfig map[string]int, req *http.Request, w http.ResponseWriter) bool {
+	if len(blockConfig) != 0 {
+		for k, v := range blockConfig {
+			if strings.Contains(req.URL.Path, k) {
+				log.Printf("Block status code: %d", v)
+				writeResponse(w, v, req.Body)
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func makeResponse(req *http.Request, backendURL string, w http.ResponseWriter) {
 	client := &http.Client{}
 	newReq, err := http.NewRequest(req.Method, getURL(req, backendURL), req.Body)
 	copyHeader(req.Header, newReq.Header)
 	resp, err := client.Do(newReq)
 
-	blockCode := getBlockCode(blockConfig, req.URL.Path)
-	if blockCode != 200 {
-		w.WriteHeader(blockCode)
-		io.Copy(w, resp.Body)
-	} else {
-		if err != nil {
-			fmt.Printf("Error: %s\n", err.Error())
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		defer resp.Body.Close()
-		copyHeader(resp.Header, w.Header())
-		log.Printf("Response status: %s, headers: %s",
-			resp.Status, getHeadersJSON(resp.Header))
-		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, resp.Body)
+	if err != nil {
+		fmt.Printf("Error: %s\n", err.Error())
+		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		return
 	}
+	defer resp.Body.Close()
+	copyHeader(resp.Header, w.Header())
+	log.Printf("Response status: %s, headers: %s",
+		resp.Status, getHeadersJSON(resp.Header))
+
+	writeResponse(w, resp.StatusCode, resp.Body)
 }
 
 func getURL(req *http.Request, backendURL string) (string) {
 	return fmt.Sprintf("http://%s%s", backendURL, req.URL.Path)
-}
-
-func getBlockCode(blockConfig map[string]int, path string) int {
-	if len(blockConfig) != 0 {
-		for k, v := range blockConfig {
-			if strings.Contains(path, k) {
-				log.Printf("Block status code: %d", v)
-				return v
-			}
-		}
-	}
-	return 200
 }
 
 func copyHeader(src, dst http.Header) {
@@ -93,6 +92,11 @@ func copyHeader(src, dst http.Header) {
 			dst.Add(k, v)
 		}
 	}
+}
+
+func writeResponse(w http.ResponseWriter, statusCode int, body io.Reader)  {
+	w.WriteHeader(statusCode)
+	io.Copy(w, body)
 }
 
 func getCmdArgs() (lp int, bu string, dc map[string]int, bc map[string]int) {
