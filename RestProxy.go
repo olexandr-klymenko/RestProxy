@@ -64,6 +64,15 @@ func doBlock(blockConfig map[string]int, req *http.Request, w http.ResponseWrite
 }
 
 func makeResponse(req *http.Request, backendURL string, w http.ResponseWriter) {
+	resp := getResponse(req, w, backendURL)
+	defer resp.Body.Close()
+	log.Printf("Response status: %s, headers: %s",
+		resp.Status, getHeadersJSON(resp.Header))
+
+	writeResponse(w, resp.StatusCode, resp.Body)
+}
+
+func getResponse(req *http.Request, w http.ResponseWriter, backendURL string) *http.Response {
 	client := &http.Client{}
 	newReq, err := http.NewRequest(req.Method, getURL(req, backendURL), req.Body)
 	copyHeader(req.Header, newReq.Header)
@@ -72,14 +81,9 @@ func makeResponse(req *http.Request, backendURL string, w http.ResponseWriter) {
 	if err != nil {
 		fmt.Printf("Error: %s\n", err.Error())
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
-		return
 	}
-	defer resp.Body.Close()
 	copyHeader(resp.Header, w.Header())
-	log.Printf("Response status: %s, headers: %s",
-		resp.Status, getHeadersJSON(resp.Header))
-
-	writeResponse(w, resp.StatusCode, resp.Body)
+	return resp
 }
 
 func getURL(req *http.Request, backendURL string) (string) {
@@ -105,7 +109,7 @@ func getCmdArgs() (lp int, bu string, dc map[string]int, bc map[string]int) {
 	var delayConfig string
 	var blockConfig string
 	flag.IntVar(&localPort, "localPort", 5050, "Local port")
-	flag.StringVar(&backendURL, "backendURL", "127.0.0.1:8080", "Backend URL")
+	flag.StringVar(&backendURL, "backend_url", "127.0.0.1:8080", "Backend URL")
 	flag.StringVar(&delayConfig, "delay_config", "{}",
 		"Serialized dict for delaying backend endpoints"+
 			" where keys are patterns of endpoints, values are delays in seconds,"+
